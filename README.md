@@ -4,8 +4,8 @@ Implementation of an MCP server for all [Apify Actors](https://apify.com/store).
 This server enables interaction with one or more Apify Actors that can be defined in the MCP server configuration.
 
 The server can be used in two ways:
-- 🇦 **Apify MCP Server Actor**: runs an HTTP server supporting the MCP protocol via Server-Sent Events (SSE).
-- ⾕ **Apify MCP Server Stdio**: provides support for the MCP protocol via standard input/output stdio.
+- **Apify MCP Server Actor** 🇦: runs an HTTP server supporting the MCP protocol via Server-Sent Events (SSE).
+- **Apify MCP Server Stdio** ⾕: provides support for the MCP protocol via standard input/output stdio.
 
 # 🎯 What does Apify MCP server do?
 

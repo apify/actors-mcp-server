@@ -9,12 +9,23 @@ import { Actor } from 'apify';
 import { ApifyClient } from 'apify-client';
 
 import { getActorsAsTools } from './actorDefinition.js';
-import { defaults, SERVER_NAME, SERVER_VERSION } from './const.js';
+import {
+    ACTOR_MAX_CHARS_MESSAGE,
+    ACTOR_OUTPUT_MAX_CHARS,
+    defaults,
+    InternalTools,
+    SERVER_NAME,
+    SERVER_VERSION,
+} from './const.js';
+import {getInternalTools, RemoveActorToolArgsSchema, AddActorToToolsArgsSchema, SearchActorsArgsSchema,searchActorsByKeywords} from './internalActorTools.js';
 import { log } from './logger.js';
 import type { Tool } from './types';
 
 /**
  * Create Apify MCP server
+ *
+ * The server allows to call Apify actors and retrieve the dataset items.
+ * Also, it provides two internal tools: `search-actors' and 'add-actor-to-tools', 'remove-actor-from-tools'
  */
 export class ApifyMcpServer {
     private server: Server;
@@ -33,6 +44,9 @@ export class ApifyMcpServer {
             },
         );
         this.tools = new Map();
+        // for (const tool of getInternalTools()) {
+        //     this.tools.set(tool.name, tool);
+        // }
         this.setupErrorHandling();
         this.setupToolHandlers();
     }
@@ -117,14 +131,47 @@ export class ApifyMcpServer {
                 throw new Error(`Unknown tool: ${name}`);
             }
 
+            if (!args) {
+                throw new Error(`Missing arguments for tool: ${name}`);
+            }
+
             log.info(`Validate arguments for tool: ${name} with arguments: ${JSON.stringify(args)}`);
             if (!tool.ajvValidate(args)) {
-                throw new Error(`Invalid arguments for tool ${name}: args: ${JSON.stringify(args)} error: ${JSON.stringify(tool?.ajvValidate.errors)}`);
+                throw new Error(`Invalid arguments for tool ${name}: args: ${JSON.stringify(args)}
+                    error: ${JSON.stringify(tool?.ajvValidate.errors)}`);
             }
 
             try {
-                const items = await this.callActorGetDataset(name, args);
-                return { content: items.map((item) => ({ type: 'text', text: JSON.stringify(item) })) };
+                switch (name) {
+                    case InternalTools.ADD_ACTOR_TO_TOOLS: {
+                        const parsed = AddActorToToolsArgsSchema.parse(args);
+                        await this.addToolsFromActors([parsed.name]);
+                        return { content: `Actor ${parsed.name} added to tools` };
+                    }
+                    case InternalTools.REMOVE_ACTOR_FROM_TOOLS: {
+                        const parsed = RemoveActorToolArgsSchema.parse(args);
+                        this.tools.delete(parsed.name);
+                        return { content: `Actor ${args.name} removed from tools` };
+                    }
+                    case InternalTools.SEARCH_ACTORS: {
+                        const parsed = SearchActorsArgsSchema.parse(args);
+                        const actors = await searchActorsByKeywords(
+                            parsed.search,
+                            parsed.limit,
+                            parsed.offset,
+                        );
+                        return { content: `Found actors: ${JSON.stringify(actors)}` };
+                    }
+                    default: {
+                        const items = await this.callActorGetDataset(name, args);
+                        const content = items.map((item) => ({
+                            type: 'text',
+                            text: JSON.stringify(item),
+                        })).slice(0, ACTOR_OUTPUT_MAX_CHARS);
+                        return { content: content.length === ACTOR_OUTPUT_MAX_CHARS
+                            ? content + ACTOR_MAX_CHARS_MESSAGE : content };
+                    }
+                }
             } catch (error) {
                 log.error(`Error calling tool: ${error}`);
                 throw new Error(`Error calling tool: ${error}`);
