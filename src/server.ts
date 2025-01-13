@@ -10,8 +10,7 @@ import { ApifyClient } from 'apify-client';
 
 import { getActorsAsTools } from './actorDefinition.js';
 import {
-    ACTOR_MAX_CHARS_MESSAGE,
-    ACTOR_OUTPUT_MAX_CHARS,
+    ACTOR_OUTPUT_ITEM_MAX_CHARS,
     defaults,
     InternalTools,
     SERVER_NAME,
@@ -44,9 +43,9 @@ export class ApifyMcpServer {
             },
         );
         this.tools = new Map();
-        // for (const tool of getInternalTools()) {
-        //     this.tools.set(tool.name, tool);
-        // }
+        for (const tool of getInternalTools()) {
+            this.tools.set(tool.name, tool);
+        }
         this.setupErrorHandling();
         this.setupToolHandlers();
     }
@@ -146,12 +145,12 @@ export class ApifyMcpServer {
                     case InternalTools.ADD_ACTOR_TO_TOOLS: {
                         const parsed = AddActorToToolsArgsSchema.parse(args);
                         await this.addToolsFromActors([parsed.name]);
-                        return { content: `Actor ${parsed.name} added to tools` };
+                        return { content: [`Actor ${parsed.name} added to tools`] };
                     }
                     case InternalTools.REMOVE_ACTOR_FROM_TOOLS: {
                         const parsed = RemoveActorToolArgsSchema.parse(args);
                         this.tools.delete(parsed.name);
-                        return { content: `Actor ${args.name} removed from tools` };
+                        return { content: [`Actor ${args.name} removed from tools`] };
                     }
                     case InternalTools.SEARCH_ACTORS: {
                         const parsed = SearchActorsArgsSchema.parse(args);
@@ -160,16 +159,15 @@ export class ApifyMcpServer {
                             parsed.limit,
                             parsed.offset,
                         );
-                        return { content: `Found actors: ${JSON.stringify(actors)}` };
+                        return { content: actors?.map((item) =>
+                                ({ type: 'text', text: JSON.stringify(item) }))
+                        };
                     }
                     default: {
                         const items = await this.callActorGetDataset(name, args);
-                        const content = items.map((item) => ({
-                            type: 'text',
-                            text: JSON.stringify(item),
-                        })).slice(0, ACTOR_OUTPUT_MAX_CHARS);
-                        return { content: content.length === ACTOR_OUTPUT_MAX_CHARS
-                            ? content + ACTOR_MAX_CHARS_MESSAGE : content };
+                        return { content: items.map((item) =>
+                                ({ type: 'text', text: JSON.stringify(item).slice(0, ACTOR_OUTPUT_ITEM_MAX_CHARS) }))
+                        };
                     }
                 }
             } catch (error) {

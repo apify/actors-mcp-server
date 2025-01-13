@@ -31,36 +31,36 @@ export const SearchActorsArgsSchema = z.object({
 });
 
 export const RemoveActorToolArgsSchema = z.object({
-    name: z.string().describe('The name of the Actor tool to remove.'),
+    name: z.string().describe('Full name of the Actor tool to remove. For example, apify/rag-web-browser not only rag-web-browser.'),
 });
 
 export const AddActorToToolsArgsSchema = z.object({
-    name: z.string().describe('The name of the Actor to add as tool.'),
+    name: z.string().describe('Full name of the Actor to add as tool. For example, apify/rag-web-browser not only rag-web-browser.'),
 });
 
 export function getInternalTools(): Tool[] {
     const ajv = new Ajv({ coerceTypes: 'array', strict: false });
     return [
-        // {
-        //     name: InternalTools.SEARCH_ACTORS,
-        //     description: 'Search for actors by keywords. Returns a list of actors with name, description, and readme.',
-        //     inputSchema: zodToJsonSchema(SearchActorsArgsSchema),
-        //     ajvValidate: ajv.compile(zodToJsonSchema(SearchActorsArgsSchema)),
-        // },
-        // {
-        //     name: InternalTools.ADD_ACTOR_TO_TOOLS,
-        //     description: 'Add an actor tool by name to available tools. '
-        //         + 'For example, when user says, I need to use apify/rag-web-browser',
-        //     inputSchema: zodToJsonSchema(AddActorToToolsArgsSchema),
-        //     // ajvValidate: ajv.compile(zodToJsonSchema(AddActorToToolsArgsSchema)),
-        // },
-        // {
-        //     name: InternalTools.REMOVE_ACTOR_FROM_TOOLS,
-        //     description: 'Remove an actor tool by name from available toos. '
-        //         + 'For example, when user says, I do not need tool apify_rag-web-browser',
-        //     inputSchema: zodToJsonSchema(RemoveActorToolArgsSchema),
-        //     // ajvValidate: ajv.compile(zodToJsonSchema(RemoveActorToolArgsSchema)),
-        // },
+        {
+            name: InternalTools.SEARCH_ACTORS,
+            description: 'Search for actors by keywords. Returns a list of actors with name, description, and readme.',
+            inputSchema: zodToJsonSchema(SearchActorsArgsSchema),
+            ajvValidate: ajv.compile(zodToJsonSchema(SearchActorsArgsSchema)),
+        },
+        {
+            name: InternalTools.ADD_ACTOR_TO_TOOLS,
+            description: 'Add an actor tool by name to available tools. '
+                + 'For example, when user says, I need to use apify/rag-web-browser',
+            inputSchema: zodToJsonSchema(AddActorToToolsArgsSchema),
+            ajvValidate: ajv.compile(zodToJsonSchema(AddActorToToolsArgsSchema)),
+        },
+        {
+            name: InternalTools.REMOVE_ACTOR_FROM_TOOLS,
+            description: 'Remove an actor tool by name from available toos. '
+                + 'For example, when user says, I do not need tool apify_rag-web-browser',
+            inputSchema: zodToJsonSchema(RemoveActorToolArgsSchema),
+            ajvValidate: ajv.compile(zodToJsonSchema(RemoveActorToolArgsSchema)),
+        },
     ];
 }
 
