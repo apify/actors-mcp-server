@@ -10,6 +10,8 @@ The server can be used in several ways:
 - **⾕ MCP Server Stdio** – Local server available via standard input/output (stdio).
 - **💬 [Tester MCP Client](https://apify.com/jiri.spilka/tester-mcp-client)** – Chat-like UI for interacting with the MCP server.
 
+<a href="https://glama.ai/mcp/servers/0sr3j8xoat"><img width="380" height="200" src="https://glama.ai/mcp/servers/0sr3j8xoat/badge" alt="actors-mcp-server MCP server" /></a>
+
 # 🎯 What does Apify MCP server do?
 
 The MCP Server Actor allows an AI assistant to use any [Apify Actor](https://apify.com/store) as a tool to perform a specific task.
