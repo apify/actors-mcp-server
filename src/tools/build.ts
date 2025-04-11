@@ -1,0 +1,128 @@
+import { Ajv } from 'ajv';
+import { ApifyClient } from 'apify-client';
+import { z } from 'zod';
+import zodToJsonSchema from 'zod-to-json-schema';
+
+import log from '@apify/log';
+
+import { ACTOR_README_MAX_LENGTH, HelperTools } from '../const.js';
+import type { ActorDefinitionPruned, ActorDefinitionWithDesc, InternalTool, ISchemaProperties, ToolWrap } from '../types.js';
+import { filterSchemaProperties, shortenProperties } from './utils.js';
+
+const ajv = new Ajv({ coerceTypes: 'array', strict: false });
+
+/**
+ * Get Actor input schema by Actor name.
+ * First, fetch the Actor details to get the default build tag and buildId.
+ * Then, fetch the build details and return actorName, description, and input schema.
+ * @param {string} actorIdOrName - Actor ID or Actor full name.
+ * @param {number} limit - Truncate the README to this limit.
+ * @returns {Promise<ActorDefinitionWithDesc | null>} - The actor definition with description or null if not found.
+ */
+export async function getActorDefinition(actorIdOrName: string, limit: number = ACTOR_README_MAX_LENGTH): Promise<ActorDefinitionPruned | null> {
+    const client = new ApifyClient({ token: process.env.APIFY_TOKEN });
+    const actorClient = client.actor(actorIdOrName);
+    try {
+        // Fetch actor details
+        const actor = await actorClient.get();
+        if (!actor) {
+            log.error(`Failed to fetch input schema for Actor: ${actorIdOrName}. Actor not found.`);
+            return null;
+        }
+
+        // fnesveda: The default build is not necessarily tagged, you can specify any build number as default build.
+        // There will be a new API endpoint to fetch a default build.
+        // For now, we'll use the tagged build, it will work for 90% of Actors. Later, we can update this.
+        const tag = actor.defaultRunOptions?.build || '';
+        const buildId = actor.taggedBuilds?.[tag]?.buildId || '';
+
+        if (!buildId) {
+            log.error(`Failed to fetch input schema for Actor: ${actorIdOrName}. Build ID not found.`);
+            return null;
+        }
+        // Fetch build details and return the input schema
+        const buildDetails = await client.build(buildId).get();
+        if (buildDetails?.actorDefinition) {
+            const actorDefinitions = buildDetails?.actorDefinition as ActorDefinitionWithDesc;
+            actorDefinitions.id = actor.id;
+            actorDefinitions.readme = truncateActorReadme(actorDefinitions.readme || '', limit);
+            actorDefinitions.description = actor.description || '';
+            actorDefinitions.actorFullName = `${actor.username}/${actor.name}`;
+            actorDefinitions.defaultRunOptions = actor.defaultRunOptions;
+            return pruneActorDefinition(actorDefinitions);
+        }
+        return null;
+    } catch (error) {
+        const errorMessage = `Failed to fetch input schema for Actor: ${actorIdOrName} with error ${error}.`;
+        log.error(errorMessage);
+        throw new Error(errorMessage);
+    }
+}
+function pruneActorDefinition(response: ActorDefinitionWithDesc): ActorDefinitionPruned {
+    return {
+        id: response.id,
+        actorFullName: response.actorFullName || '',
+        buildTag: response?.buildTag || '',
+        readme: response?.readme || '',
+        input: response?.input && 'type' in response.input && 'properties' in response.input
+            ? {
+                ...response.input,
+                type: response.input.type as string,
+                properties: response.input.properties as Record<string, ISchemaProperties>,
+            }
+            : undefined,
+        description: response.description,
+        defaultRunOptions: response.defaultRunOptions,
+    };
+}
+/** Prune Actor README if it is too long
+ * If the README is too long
+ * - We keep the README as it is up to the limit.
+ * - After the limit, we keep heading only
+ * - We add a note that the README was truncated because it was too long.
+ */
+function truncateActorReadme(readme: string, limit = ACTOR_README_MAX_LENGTH): string {
+    if (readme.length <= limit) {
+        return readme;
+    }
+    const readmeFirst = readme.slice(0, limit);
+    const readmeRest = readme.slice(limit);
+    const lines = readmeRest.split('\n');
+    const prunedReadme = lines.filter((line) => line.startsWith('#'));
+    return `${readmeFirst}\n\nREADME was truncated because it was too long. Remaining headers:\n${prunedReadme.join(', ')}`;
+}
+
+const GetActorDefinitionArgsSchema = z.object({
+    actorName: z.string()
+        .describe('Retrieve input, readme, and other details for Actor ID or Actor full name. '
+            + 'Actor name is always composed from `username/name`'),
+    limit: z.number()
+        .int()
+        .default(ACTOR_README_MAX_LENGTH)
+        .describe(`Truncate the README to this limit. Default value is ${ACTOR_README_MAX_LENGTH}.`),
+});
+
+export const actorDefinitionTool: ToolWrap = {
+    type: 'internal',
+    tool: {
+        name: HelperTools.GET_TOOL_DETAILS,
+        actorFullName: HelperTools.GET_TOOL_DETAILS,
+        description: 'Get documentation, readme, input schema and other details about an Actor. '
+            + 'For example, when user says, I need to know more about web crawler Actor.'
+            + 'Get details for an Actor with with Actor ID or Actor full name, i.e. username/name.'
+            + `Limit the length of the README if needed.`,
+        inputSchema: zodToJsonSchema(GetActorDefinitionArgsSchema),
+        ajvValidate: ajv.compile(zodToJsonSchema(GetActorDefinitionArgsSchema)),
+        call: async (toolArgs) => {
+            const { args } = toolArgs;
+
+            const parsed = GetActorDefinitionArgsSchema.parse(args);
+            const v = await getActorDefinition(parsed.actorName, parsed.limit);
+            if (v && v.input && 'properties' in v.input && v.input) {
+                const properties = filterSchemaProperties(v.input.properties as { [key: string]: ISchemaProperties });
+                v.input.properties = shortenProperties(properties);
+            }
+            return { content: [{ type: 'text', text: JSON.stringify(v) }] };
+        },
+    } as InternalTool,
+};

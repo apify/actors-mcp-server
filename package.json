@@ -1,14 +1,14 @@
 {
   "name": "@apify/actors-mcp-server",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "type": "module",
-  "description": "Model Context Protocol Server for Apify Actors",
+  "description": "Model Context Protocol Server for Apify",
   "engines": {
     "node": ">=18.0.0"
   },
   "main": "dist/index.js",
   "bin": {
-    "actors-mcp-server": "./dist/index.js"
+    "actors-mcp-server": "./dist/stdio.js"
   },
   "files": [
     "dist",
@@ -30,10 +30,11 @@
     "model context protocol"
   ],
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.3.1",
+    "@apify/log": "^2.5.16",
+    "@modelcontextprotocol/sdk": "^1.9.0",
     "ajv": "^8.17.1",
-    "apify": "^3.2.6",
-    "apify-client": "^2.11.2",
+    "apify": "^3.4.0",
+    "apify-client": "^2.12.1",
     "express": "^4.21.2",
     "minimist": "^1.2.8",
     "zod": "^3.24.1",
@@ -42,28 +43,30 @@
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.33.1",
     "@anthropic-ai/tokenizer": "^0.0.4",
-    "@apify/eslint-config": "^0.5.0-beta.2",
+    "@apify/eslint-config": "^1.0.0",
     "@apify/tsconfig": "^0.1.0",
     "@types/express": "^4.0.0",
     "@types/minimist": "^1.2.5",
     "dotenv": "^16.4.7",
-    "eslint": "^9.17.0",
+    "eslint": "^9.19.0",
     "eventsource": "^3.0.2",
     "tsx": "^4.6.2",
     "typescript": "^5.3.3",
-    "typescript-eslint": "^8.18.2",
+    "typescript-eslint": "^8.23.0",
     "vitest": "^3.0.8"
   },
   "scripts": {
     "start": "npm run start:dev",
     "start:prod": "node dist/main.js",
     "start:dev": "tsx src/main.ts",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
+    "lint": "./node_modules/.bin/eslint .",
+    "lint:fix": "./node_modules/.bin/eslint . --fix",
     "build": "tsc",
-    "watch": "tsc --watch",
-    "inspector": "npx @modelcontextprotocol/inspector dist/index.js",
-    "test": "vitest run"
+    "build:watch": "tsc -w",
+    "inspector": "npx @modelcontextprotocol/inspector dist/stdio.js",
+    "test": "vitest run",
+    "type-check": "tsc --noEmit",
+    "clean": "tsc -b src --clean"
   },
   "author": "Apify",
   "license": "MIT"

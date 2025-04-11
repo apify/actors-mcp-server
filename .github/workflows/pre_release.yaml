@@ -5,6 +5,7 @@ on:
     push:
         branches:
             - master
+            - 'feat/decouple'
         tags-ignore:
             - "**" # Ignore all tags to prevent duplicate builds when tags are pushed.
 
@@ -36,7 +37,7 @@ jobs:
                 with:
                     ref: ${{ github.ref }}
                     repo-token: ${{ secrets.GITHUB_TOKEN }}
-                    check-regexp: (Build & Test .*|Lint|Docs build)
+                    check-regexp: (Code checks)
                     wait-interval: 5
 
     update_changelog:

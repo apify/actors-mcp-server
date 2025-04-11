@@ -9,12 +9,13 @@ on:
     push:
         branches:
             - master
+            - 'feat/decouple'
         tags-ignore:
             - "**" # Ignore all tags to prevent duplicate builds when tags are pushed.
 
 jobs:
     lint_and_test:
-        name: Build & Test
+        name: Code checks
         runs-on: ubuntu-latest
 
         steps:
