@@ -17,6 +17,7 @@ import {
     SERVER_NAME,
     SERVER_VERSION,
 } from '../const.js';
+import { internalToolsMap } from '../toolmap.js';
 import { helpTool } from '../tools/helpers.js';
 import {
     actorDefinitionTool,
@@ -37,6 +38,8 @@ type ActorsMcpServerOptions = {
     enableDefaultActors?: boolean;
 };
 
+type ToolsChangedHandler = (toolNames: string[]) => void;
+
 /**
  * Create Apify MCP server
  */
@@ -44,6 +47,7 @@ export class ActorsMcpServer {
     public readonly server: Server;
     public readonly tools: Map<string, ToolWrap>;
     private readonly options: ActorsMcpServerOptions;
+    private toolsChangedHandler: ToolsChangedHandler | undefined;
 
     constructor(options: ActorsMcpServerOptions = {}, setupSIGINTHandler = true) {
         this.options = {
@@ -81,12 +85,127 @@ export class ActorsMcpServer {
     }
 
     /**
+    * Returns a list of Actor IDs that are registered as MCP servers.
+    * @returns {string[]} - An array of Actor MCP server Actor IDs (e.g., 'apify/actors-mcp-server').
+    */
+    public getToolMCPServerActors(): string[] {
+        const mcpServerActors: Set<string> = new Set();
+        for (const tool of this.tools.values()) {
+            if (tool.type === 'actor-mcp') {
+                mcpServerActors.add((tool.tool as ActorMCPTool).actorID);
+            }
+        }
+
+        return Array.from(mcpServerActors);
+    }
+
+    /**
+    * Register handler to get notified when tools change.
+    * The handler receives an array of tool names that the server has after the change.
+    * This is primarily used to store the tools in shared state (e.g., Redis) for recovery
+    * when the server loses local state.
+    * @throws {Error} - If a handler is already registered.
+    * @param handler - The handler function to be called when tools change.
+    */
+    public registerToolsChangedHandler(handler: (toolNames: string[]) => void) {
+        if (this.toolsChangedHandler) {
+            throw new Error('Tools changed handler is already registered.');
+        }
+        this.toolsChangedHandler = handler;
+    }
+
+    /**
+    * Unregister the handler for tools changed event.
+    * @throws {Error} - If no handler is currently registered.
+    */
+    public unregisterToolsChangedHandler() {
+        if (!this.toolsChangedHandler) {
+            throw new Error('Tools changed handler is not registered.');
+        }
+        this.toolsChangedHandler = undefined;
+    }
+
+    /**
+    * Loads missing tools from a provided list of tool names.
+    * Skips tools that are already loaded and loads only the missing ones.
+    * @param tools - Array of tool names to ensure are loaded
+    * @param apifyToken - Apify API token for authentication
+    */
+    public async loadToolsFromToolsList(tools: string[], apifyToken: string) {
+        const loadedTools = this.getLoadedActorToolsList();
+        const actorsToLoad: string[] = [];
+
+        for (const tool of tools) {
+            // Skip if the tool is already loaded
+            if (loadedTools.includes(tool)) {
+                continue;
+            }
+
+            // Load internal tool
+            if (internalToolsMap.has(tool)) {
+                const toolWrap = internalToolsMap.get(tool) as ToolWrap;
+                this.tools.set(tool, toolWrap);
+                log.info(`Added internal tool: ${tool}`);
+                // Handler Actor tool
+            } else {
+                actorsToLoad.push(tool);
+            }
+        }
+
+        if (actorsToLoad.length > 0) {
+            const actorTools = await getActorsAsTools(actorsToLoad, apifyToken);
+            if (actorTools.length > 0) {
+                this.updateTools(actorTools);
+            }
+            log.info(`Loaded tools: ${actorTools.map((t) => t.tool.name).join(', ')}`);
+        }
+    }
+
+    /**
+    * Returns the list of all currently loaded Actor tool IDs.
+    * @returns {string[]} - Array of loaded Actor tool IDs (e.g., 'apify/rag-web-browser')
+    */
+    public getLoadedActorToolsList(): string[] {
+        // Get the list of tool names
+        const tools: string[] = [];
+        for (const tool of this.tools.values()) {
+            if (tool.type === 'actor') {
+                tools.push((tool.tool as ActorTool).actorFullName);
+            // Skip Actorized MCP servers since there may be multiple tools from the same Actor MCP server
+            // so we skip and then get unique list of Actor MCP servers separately
+            } else if (tool.type === 'actor-mcp') {
+                continue;
+            } else {
+                tools.push(tool.tool.name);
+            }
+        }
+        // Add unique list Actorized MCP servers original Actor IDs - for example: apify/actors-mcp-server
+        tools.push(...this.getToolMCPServerActors());
+
+        return tools;
+    }
+
+    private notifyToolsChangedHandler() {
+        // If no handler is registered, do nothing
+        if (!this.toolsChangedHandler) return;
+
+        // Get the list of tool names
+        const tools: string[] = this.getLoadedActorToolsList();
+
+        this.toolsChangedHandler(tools);
+    }
+
+    /**
     * Resets the server to the default state.
     * This method clears all tools and loads the default tools.
     * Used primarily for testing purposes.
     */
     public async reset(): Promise<void> {
         this.tools.clear();
+        // Unregister the tools changed handler
+        if (this.toolsChangedHandler) {
+            this.unregisterToolsChangedHandler();
+        }
         this.updateTools([searchTool, actorDefinitionTool, helpTool]);
         if (this.options.enableAddingActors) {
             this.loadToolsToAddActors();
@@ -128,7 +247,7 @@ export class ActorsMcpServer {
         const tools = await processParamsGetTools(url, apifyToken);
         if (tools.length > 0) {
             log.info('Loading tools from query parameters...');
-            this.updateTools(tools);
+            this.updateTools(tools, false);
         }
     }
 
@@ -136,20 +255,47 @@ export class ActorsMcpServer {
      * Add Actors to server dynamically
      */
     public loadToolsToAddActors() {
-        this.updateTools([addTool, removeTool]);
+        this.updateTools([addTool, removeTool], false);
     }
 
     /**
      * Upsert new tools.
-     * @param tools - Array of tool wrappers.
-     * @returns Array of tool wrappers.
+     * @param tools - Array of tool wrappers to add or update
+     * @param shouldNotifyToolsChangedHandler - Whether to notify the tools changed handler
+     * @returns Array of added/updated tool wrappers
      */
-    public updateTools(tools: ToolWrap[]) {
+    public updateTools(tools: ToolWrap[], shouldNotifyToolsChangedHandler = false) {
         for (const wrap of tools) {
             this.tools.set(wrap.tool.name, wrap);
             log.info(`Added/updated tool: ${wrap.tool.name}`);
         }
+        if (shouldNotifyToolsChangedHandler) this.notifyToolsChangedHandler();
         return tools;
+    }
+
+    /**
+    * Delete tools by name.
+    * Notifies the tools changed handler if any tools were deleted.
+    * @param toolNames - Array of tool names to delete
+    * @returns Array of tool names that were successfully deleted
+    */
+    public deleteTools(toolNames: string[]): string[] {
+        const notFoundTools: string[] = [];
+        // Delete the tools
+        for (const toolName of toolNames) {
+            if (this.tools.has(toolName)) {
+                this.tools.delete(toolName);
+                log.info(`Deleted tool: ${toolName}`);
+            } else {
+                notFoundTools.push(toolName);
+            }
+        }
+
+        if (toolNames.length > notFoundTools.length) {
+            this.notifyToolsChangedHandler();
+        }
+        // Return the list of tools that were removed
+        return toolNames.filter((toolName) => !notFoundTools.includes(toolName));
     }
 
     /**

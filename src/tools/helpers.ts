@@ -80,7 +80,7 @@ export const addTool: ToolWrap = {
             const { apifyMcpServer, mcpServer, apifyToken, args } = toolArgs;
             const parsed = AddToolArgsSchema.parse(args);
             const tools = await getActorsAsTools([parsed.actorName], apifyToken);
-            const toolsAdded = apifyMcpServer.updateTools(tools);
+            const toolsAdded = apifyMcpServer.updateTools(tools, true);
             await mcpServer.notification({ method: 'notifications/tools/list_changed' });
 
             return {
@@ -110,9 +110,9 @@ export const removeTool: ToolWrap = {
             const { apifyMcpServer, mcpServer, args } = toolArgs;
 
             const parsed = RemoveToolArgsSchema.parse(args);
-            apifyMcpServer.tools.delete(parsed.toolName);
+            const removedTools = apifyMcpServer.deleteTools([parsed.toolName]);
             await mcpServer.notification({ method: 'notifications/tools/list_changed' });
-            return { content: [{ type: 'text', text: `Tool ${parsed.toolName} was removed` }] };
+            return { content: [{ type: 'text', text: `Tools removed: ${removedTools.join(', ')}` }] };
         },
     } as InternalTool,
 };
