@@ -17,14 +17,12 @@ import {
     SERVER_NAME,
     SERVER_VERSION,
 } from '../const.js';
-import { helpTool } from '../tools/helpers.js';
 import {
-    actorDefinitionTool,
     addTool,
     callActorGetDataset,
+    defaultTools,
     getActorsAsTools,
     removeTool,
-    searchTool,
 } from '../tools/index.js';
 import { actorNameToToolName } from '../tools/utils.js';
 import type { ActorMCPTool, ActorTool, HelperTool, ToolWrap } from '../types.js';
@@ -67,7 +65,7 @@ export class ActorsMcpServer {
         this.setupToolHandlers();
 
         // Add default tools
-        this.updateTools([searchTool, actorDefinitionTool, helpTool]);
+        this.updateTools(defaultTools);
 
         // Add tools to dynamically load Actors
         if (this.options.enableAddingActors) {
@@ -87,7 +85,7 @@ export class ActorsMcpServer {
     */
     public async reset(): Promise<void> {
         this.tools.clear();
-        this.updateTools([searchTool, actorDefinitionTool, helpTool]);
+        this.updateTools(defaultTools);
         if (this.options.enableAddingActors) {
             this.loadToolsToAddActors();
         }
@@ -208,7 +206,6 @@ export class ActorsMcpServer {
             }
 
             // TODO - if connection is /mcp client will not receive notification on tool change
-
             // Find tool by name or actor full name
             const tool = Array.from(this.tools.values())
                 .find((t) => t.tool.name === name || (t.type === 'actor' && (t.tool as ActorTool).actorFullName === name));
@@ -277,18 +274,25 @@ export class ActorsMcpServer {
                 if (tool.type === 'actor') {
                     const actorTool = tool.tool as ActorTool;
 
-                    const callOptions: ActorCallOptions = {
-                        memory: actorTool.memoryMbytes,
-                    };
+                    const callOptions: ActorCallOptions = { memory: actorTool.memoryMbytes };
+                    const { actorRun, datasetInfo, items } = await callActorGetDataset(
+                        actorTool.actorFullName,
+                        args,
+                        apifyToken as string,
+                        callOptions,
+                    );
+                    const content = [
+                        { type: 'text', text: `Actor finished with run information: ${JSON.stringify(actorRun)}` },
+                        { type: 'text', text: `Dataset information: ${JSON.stringify(datasetInfo)}` },
+                    ];
 
-                    const items = await callActorGetDataset(actorTool.actorFullName, args, apifyToken as string, callOptions);
-
-                    const content = items.map((item) => {
+                    const itemContents = items.items.map((item: Record<string, unknown>) => {
                         const text = JSON.stringify(item).slice(0, ACTOR_OUTPUT_MAX_CHARS_PER_ITEM);
                         return text.length === ACTOR_OUTPUT_MAX_CHARS_PER_ITEM
                             ? { type: 'text', text: `${text} ... ${ACTOR_OUTPUT_TRUNCATED_MESSAGE}` }
                             : { type: 'text', text };
                     });
+                    content.push(...itemContents);
                     return { content };
                 }
             } catch (error) {
