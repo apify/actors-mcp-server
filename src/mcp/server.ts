@@ -5,7 +5,13 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { CallToolRequestSchema, CallToolResultSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
+import {
+    CallToolRequestSchema,
+    CallToolResultSchema,
+    ErrorCode,
+    ListToolsRequestSchema,
+    McpError,
+} from '@modelcontextprotocol/sdk/types.js';
 import type { ActorCallOptions } from 'apify-client';
 
 import log from '@apify/log';
@@ -17,18 +23,9 @@ import {
     SERVER_NAME,
     SERVER_VERSION,
 } from '../const.js';
-import { internalToolsMap } from '../toolmap.js';
-import { helpTool } from '../tools/helpers.js';
-import {
-    actorDefinitionTool,
-    addTool,
-    callActorGetDataset,
-    getActorsAsTools,
-    removeTool,
-    searchTool,
-} from '../tools/index.js';
+import { addRemoveTools, callActorGetDataset, defaultTools, getActorsAsTools } from '../tools/index.js';
 import { actorNameToToolName } from '../tools/utils.js';
-import type { ActorMCPTool, ActorTool, HelperTool, ToolWrap } from '../types.js';
+import type { ActorMcpTool, ActorTool, HelperTool, ToolEntry } from '../types.js';
 import { createMCPClient } from './client.js';
 import { EXTERNAL_TOOL_CALL_TIMEOUT_MSEC } from './const.js';
 import { processParamsGetTools } from './utils.js';
@@ -45,11 +42,11 @@ type ToolsChangedHandler = (toolNames: string[]) => void;
  */
 export class ActorsMcpServer {
     public readonly server: Server;
-    public readonly tools: Map<string, ToolWrap>;
-    private readonly options: ActorsMcpServerOptions;
+    public readonly tools: Map<string, ToolEntry>;
+    private options: ActorsMcpServerOptions;
     private toolsChangedHandler: ToolsChangedHandler | undefined;
 
-    constructor(options: ActorsMcpServerOptions = {}, setupSIGINTHandler = true) {
+    constructor(options: ActorsMcpServerOptions = {}, setupSigintHandler = true) {
         this.options = {
             enableAddingActors: options.enableAddingActors ?? false,
             enableDefaultActors: options.enableDefaultActors ?? true, // Default to true for backward compatibility
@@ -67,15 +64,15 @@ export class ActorsMcpServer {
             },
         );
         this.tools = new Map();
-        this.setupErrorHandling(setupSIGINTHandler);
+        this.setupErrorHandling(setupSigintHandler);
         this.setupToolHandlers();
 
         // Add default tools
-        this.updateTools([searchTool, actorDefinitionTool, helpTool]);
+        this.upsertTools(defaultTools);
 
         // Add tools to dynamically load Actors
         if (this.options.enableAddingActors) {
-            this.loadToolsToAddActors();
+            this.enableDynamicActorTools();
         }
 
         // Initialize automatically for backward compatibility
@@ -85,18 +82,11 @@ export class ActorsMcpServer {
     }
 
     /**
-    * Returns a list of Actor IDs that are registered as MCP servers.
-    * @returns {string[]} - An array of Actor MCP server Actor IDs (e.g., 'apify/actors-mcp-server').
-    */
-    public getToolMCPServerActors(): string[] {
-        const mcpServerActors: Set<string> = new Set();
-        for (const tool of this.tools.values()) {
-            if (tool.type === 'actor-mcp') {
-                mcpServerActors.add((tool.tool as ActorMCPTool).actorID);
-            }
-        }
-
-        return Array.from(mcpServerActors);
+     * Returns an array of tool names.
+     * @returns {string[]} - An array of tool names.
+     */
+    public listToolNames(): string[] {
+        return Array.from(this.tools.keys());
     }
 
     /**
@@ -126,73 +116,76 @@ export class ActorsMcpServer {
     }
 
     /**
-    * Loads missing tools from a provided list of tool names.
-    * Skips tools that are already loaded and loads only the missing ones.
-    * @param tools - Array of tool names to ensure are loaded
+     * Returns the list of all internal tool names
+     * @returns {string[]} - Array of loaded tool IDs (e.g., 'apify/rag-web-browser')
+     */
+    private listInternalToolNames(): string[] {
+        return Array.from(this.tools.values())
+            .filter((tool) => tool.type === 'internal')
+            .map((tool) => (tool.tool as HelperTool).name);
+    }
+
+    /**
+     * Returns the list of all currently loaded Actor tool IDs.
+     * @returns {string[]} - Array of loaded Actor tool IDs (e.g., 'apify/rag-web-browser')
+     */
+    private listActorToolNames(): string[] {
+        return Array.from(this.tools.values())
+            .filter((tool) => tool.type === 'actor')
+            .map((tool) => (tool.tool as ActorTool).actorFullName);
+    }
+
+    /**
+     * Returns a list of Actor IDs that are registered as MCP servers.
+     * @returns {string[]} - An array of Actor MCP server Actor IDs (e.g., 'apify/actors-mcp-server').
+     */
+    private listActorMcpServerToolIds(): string[] {
+        return Array.from(this.tools.values())
+            .filter((tool) => tool.type === 'actor-mcp')
+            .map((tool) => (tool.tool as ActorMcpTool).actorId);
+    }
+
+    /**
+     * Returns a list of Actor name and MCP server tool IDs.
+     * @returns {string[]} - An array of Actor MCP server Actor IDs (e.g., 'apify/actors-mcp-server').
+     */
+    public listAllToolNames(): string[] {
+        return [...this.listInternalToolNames(), ...this.listActorToolNames(), ...this.listActorMcpServerToolIds()];
+    }
+
+    /**
+    * Loads missing toolNames from a provided list of tool names.
+    * Skips toolNames that are already loaded and loads only the missing ones.
+    * @param toolNames - Array of tool names to ensure are loaded
     * @param apifyToken - Apify API token for authentication
     */
-    public async loadToolsFromToolsList(tools: string[], apifyToken: string) {
-        const loadedTools = this.getLoadedActorToolsList();
+    public async loadToolsByName(toolNames: string[], apifyToken: string) {
+        const loadedTools = this.listAllToolNames();
         const actorsToLoad: string[] = [];
+        const toolsToLoad: ToolEntry[] = [];
+        const internalToolMap = new Map([...defaultTools, ...addRemoveTools].map((tool) => [tool.tool.name, tool]));
 
-        for (const tool of tools) {
+        for (const tool of toolNames) {
             // Skip if the tool is already loaded
-            if (loadedTools.includes(tool)) {
-                continue;
-            }
-
+            if (loadedTools.includes(tool)) continue;
             // Load internal tool
-            if (internalToolsMap.has(tool)) {
-                const toolWrap = internalToolsMap.get(tool) as ToolWrap;
-                this.tools.set(tool, toolWrap);
-                log.info(`Added internal tool: ${tool}`);
-                // Handler Actor tool
+            if (internalToolMap.has(tool)) {
+                toolsToLoad.push(internalToolMap.get(tool) as ToolEntry);
+            // Load Actor
             } else {
                 actorsToLoad.push(tool);
             }
+        }
+        if (toolsToLoad.length > 0) {
+            this.upsertTools(toolsToLoad);
         }
 
         if (actorsToLoad.length > 0) {
             const actorTools = await getActorsAsTools(actorsToLoad, apifyToken);
             if (actorTools.length > 0) {
-                this.updateTools(actorTools);
-            }
-            log.info(`Loaded tools: ${actorTools.map((t) => t.tool.name).join(', ')}`);
-        }
-    }
-
-    /**
-    * Returns the list of all currently loaded Actor tool IDs.
-    * @returns {string[]} - Array of loaded Actor tool IDs (e.g., 'apify/rag-web-browser')
-    */
-    public getLoadedActorToolsList(): string[] {
-        // Get the list of tool names
-        const tools: string[] = [];
-        for (const tool of this.tools.values()) {
-            if (tool.type === 'actor') {
-                tools.push((tool.tool as ActorTool).actorFullName);
-            // Skip Actorized MCP servers since there may be multiple tools from the same Actor MCP server
-            // so we skip and then get unique list of Actor MCP servers separately
-            } else if (tool.type === 'actor-mcp') {
-                continue;
-            } else {
-                tools.push(tool.tool.name);
+                this.upsertTools(actorTools);
             }
         }
-        // Add unique list Actorized MCP servers original Actor IDs - for example: apify/actors-mcp-server
-        tools.push(...this.getToolMCPServerActors());
-
-        return tools;
-    }
-
-    private notifyToolsChangedHandler() {
-        // If no handler is registered, do nothing
-        if (!this.toolsChangedHandler) return;
-
-        // Get the list of tool names
-        const tools: string[] = this.getLoadedActorToolsList();
-
-        this.toolsChangedHandler(tools);
     }
 
     /**
@@ -206,11 +199,10 @@ export class ActorsMcpServer {
         if (this.toolsChangedHandler) {
             this.unregisterToolsChangedHandler();
         }
-        this.updateTools([searchTool, actorDefinitionTool, helpTool]);
+        this.upsertTools(defaultTools);
         if (this.options.enableAddingActors) {
-            this.loadToolsToAddActors();
+            this.enableDynamicActorTools();
         }
-
         // Initialize automatically for backward compatibility
         await this.initialize();
     }
@@ -220,20 +212,30 @@ export class ActorsMcpServer {
      */
     public async initialize(): Promise<void> {
         if (this.options.enableDefaultActors) {
-            await this.loadDefaultTools(process.env.APIFY_TOKEN as string);
+            await this.loadDefaultActors(process.env.APIFY_TOKEN as string);
         }
     }
 
     /**
      * Loads default tools if not already loaded.
+     * @param apifyToken - Apify API token for authentication
+     * @returns {Promise<void>} - A promise that resolves when the tools are loaded
      */
-    public async loadDefaultTools(apifyToken: string) {
-        const missingDefaultTools = defaults.actors.filter((name) => !this.tools.has(actorNameToToolName(name)));
-        const tools = await getActorsAsTools(missingDefaultTools, apifyToken);
+    public async loadDefaultActors(apifyToken: string): Promise<void> {
+        const missingActors = defaults.actors.filter((name) => !this.tools.has(actorNameToToolName(name)));
+        const tools = await getActorsAsTools(missingActors, apifyToken);
         if (tools.length > 0) {
             log.info('Loading default tools...');
-            this.updateTools(tools);
+            this.upsertTools(tools);
         }
+    }
+
+    /**
+     * @deprecated Use `loadDefaultActors` instead.
+     * Loads default tools if not already loaded.
+     */
+    public async loadDefaultTools(apifyToken: string) {
+        await this.loadDefaultActors(apifyToken);
     }
 
     /**
@@ -247,15 +249,36 @@ export class ActorsMcpServer {
         const tools = await processParamsGetTools(url, apifyToken);
         if (tools.length > 0) {
             log.info('Loading tools from query parameters...');
-            this.updateTools(tools, false);
+            this.upsertTools(tools, false);
         }
     }
 
     /**
      * Add Actors to server dynamically
      */
-    public loadToolsToAddActors() {
-        this.updateTools([addTool, removeTool], false);
+    public enableDynamicActorTools() {
+        this.options.enableAddingActors = true;
+        this.upsertTools(addRemoveTools, false);
+    }
+
+    public disableDynamicActorTools() {
+        this.options.enableAddingActors = false;
+        this.removeToolsByName(addRemoveTools.map((tool) => tool.tool.name));
+    }
+
+    /** Delete tools from the server and notify the handler.
+     */
+    public removeToolsByName(toolNames: string[], shouldNotifyToolsChangedHandler = false): string[] {
+        const removedTools: string[] = [];
+        for (const toolName of toolNames) {
+            if (this.removeToolByName(toolName)) {
+                removedTools.push(toolName);
+            }
+        }
+        if (removedTools.length > 0) {
+            if (shouldNotifyToolsChangedHandler) this.notifyToolsChangedHandler();
+        }
+        return removedTools;
     }
 
     /**
@@ -264,7 +287,7 @@ export class ActorsMcpServer {
      * @param shouldNotifyToolsChangedHandler - Whether to notify the tools changed handler
      * @returns Array of added/updated tool wrappers
      */
-    public updateTools(tools: ToolWrap[], shouldNotifyToolsChangedHandler = false) {
+    public upsertTools(tools: ToolEntry[], shouldNotifyToolsChangedHandler = false) {
         for (const wrap of tools) {
             this.tools.set(wrap.tool.name, wrap);
             log.info(`Added/updated tool: ${wrap.tool.name}`);
@@ -273,44 +296,28 @@ export class ActorsMcpServer {
         return tools;
     }
 
-    /**
-    * Delete tools by name.
-    * Notifies the tools changed handler if any tools were deleted.
-    * @param toolNames - Array of tool names to delete
-    * @returns Array of tool names that were successfully deleted
-    */
-    public deleteTools(toolNames: string[]): string[] {
-        const notFoundTools: string[] = [];
-        // Delete the tools
-        for (const toolName of toolNames) {
-            if (this.tools.has(toolName)) {
-                this.tools.delete(toolName);
-                log.info(`Deleted tool: ${toolName}`);
-            } else {
-                notFoundTools.push(toolName);
-            }
-        }
+    private notifyToolsChangedHandler() {
+        // If no handler is registered, do nothing
+        if (!this.toolsChangedHandler) return;
 
-        if (toolNames.length > notFoundTools.length) {
-            this.notifyToolsChangedHandler();
-        }
-        // Return the list of tools that were removed
-        return toolNames.filter((toolName) => !notFoundTools.includes(toolName));
+        // Get the list of tool names
+        this.toolsChangedHandler(this.listAllToolNames());
     }
 
-    /**
-     * Returns an array of tool names.
-     * @returns {string[]} - An array of tool names.
-     */
-    public getToolNames(): string[] {
-        return Array.from(this.tools.keys());
+    private removeToolByName(toolName: string): boolean {
+        if (this.tools.has(toolName)) {
+            this.tools.delete(toolName);
+            log.info(`Deleted tool: ${toolName}`);
+            return true;
+        }
+        return false;
     }
 
     private setupErrorHandling(setupSIGINTHandler = true): void {
         this.server.onerror = (error) => {
             console.error('[MCP Error]', error); // eslint-disable-line no-console
         };
-        // Allow disable of SIGINT handler to prevent max listeners warning
+        // Allow disabling of the SIGINT handler to prevent max listeners warning
         if (setupSIGINTHandler) {
             process.on('SIGINT', async () => {
                 await this.server.close();
@@ -354,12 +361,11 @@ export class ActorsMcpServer {
             }
 
             // TODO - if connection is /mcp client will not receive notification on tool change
-
             // Find tool by name or actor full name
             const tool = Array.from(this.tools.values())
                 .find((t) => t.tool.name === name || (t.type === 'actor' && (t.tool as ActorTool).actorFullName === name));
             if (!tool) {
-                const msg = `Tool ${name} not found. Available tools: ${this.getToolNames().join(', ')}`;
+                const msg = `Tool ${name} not found. Available tools: ${this.listToolNames().join(', ')}`;
                 log.error(msg);
                 await this.server.sendLoggingMessage({ level: 'error', data: msg });
                 throw new McpError(
@@ -402,7 +408,7 @@ export class ActorsMcpServer {
                 }
 
                 if (tool.type === 'actor-mcp') {
-                    const serverTool = tool.tool as ActorMCPTool;
+                    const serverTool = tool.tool as ActorMcpTool;
                     let client: Client | undefined;
                     try {
                         client = await createMCPClient(serverTool.serverUrl, apifyToken);
@@ -423,18 +429,25 @@ export class ActorsMcpServer {
                 if (tool.type === 'actor') {
                     const actorTool = tool.tool as ActorTool;
 
-                    const callOptions: ActorCallOptions = {
-                        memory: actorTool.memoryMbytes,
-                    };
+                    const callOptions: ActorCallOptions = { memory: actorTool.memoryMbytes };
+                    const { actorRun, datasetInfo, items } = await callActorGetDataset(
+                        actorTool.actorFullName,
+                        args,
+                        apifyToken as string,
+                        callOptions,
+                    );
+                    const content = [
+                        { type: 'text', text: `Actor finished with run information: ${JSON.stringify(actorRun)}` },
+                        { type: 'text', text: `Dataset information: ${JSON.stringify(datasetInfo)}` },
+                    ];
 
-                    const items = await callActorGetDataset(actorTool.actorFullName, args, apifyToken as string, callOptions);
-
-                    const content = items.map((item) => {
+                    const itemContents = items.items.map((item: Record<string, unknown>) => {
                         const text = JSON.stringify(item).slice(0, ACTOR_OUTPUT_MAX_CHARS_PER_ITEM);
                         return text.length === ACTOR_OUTPUT_MAX_CHARS_PER_ITEM
                             ? { type: 'text', text: `${text} ... ${ACTOR_OUTPUT_TRUNCATED_MESSAGE}` }
                             : { type: 'text', text };
                     });
+                    content.push(...itemContents);
                     return { content };
                 }
             } catch (error) {

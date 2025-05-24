@@ -6,14 +6,14 @@ import { expect } from 'vitest';
 
 import { HelperTools } from '../src/const.js';
 
-export interface MCPClientOptions {
+export interface McpClientOptions {
     actors?: string[];
     enableAddingActors?: boolean;
 }
 
-export async function createMCPSSEClient(
+export async function createMcpSseClient(
     serverUrl: string,
-    options?: MCPClientOptions,
+    options?: McpClientOptions,
 ): Promise<Client> {
     if (!process.env.APIFY_TOKEN) {
         throw new Error('APIFY_TOKEN environment variable is not set.');
@@ -47,9 +47,9 @@ export async function createMCPSSEClient(
     return client;
 }
 
-export async function createMCPStreamableClient(
+export async function createMcpStreamableClient(
     serverUrl: string,
-    options?: MCPClientOptions,
+    options?: McpClientOptions,
 ): Promise<Client> {
     if (!process.env.APIFY_TOKEN) {
         throw new Error('APIFY_TOKEN environment variable is not set.');
@@ -83,8 +83,8 @@ export async function createMCPStreamableClient(
     return client;
 }
 
-export async function createMCPStdioClient(
-    options?: MCPClientOptions,
+export async function createMcpStdioClient(
+    options?: McpClientOptions,
 ): Promise<Client> {
     if (!process.env.APIFY_TOKEN) {
         throw new Error('APIFY_TOKEN environment variable is not set.');
@@ -120,7 +120,7 @@ export async function createMCPStdioClient(
  */
 export async function addActor(client: Client, actorName: string): Promise<void> {
     await client.callTool({
-        name: HelperTools.ADD_ACTOR,
+        name: HelperTools.ACTOR_ADD,
         arguments: {
             actorName,
         },

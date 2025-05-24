@@ -5,7 +5,7 @@ import zodToJsonSchema from 'zod-to-json-schema';
 
 import { ApifyClient } from '../apify-client.js';
 import { HelperTools } from '../const.js';
-import type { ActorStorePruned, HelperTool, PricingInfo, ToolWrap } from '../types.js';
+import type { ActorStorePruned, HelperTool, PricingInfo, ToolEntry } from '../types.js';
 
 function pruneActorStoreInfo(response: ActorStoreList): ActorStorePruned {
     const stats = response.stats || {};
@@ -45,7 +45,7 @@ export async function searchActorsByKeywords(
 }
 
 const ajv = new Ajv({ coerceTypes: 'array', strict: false });
-export const SearchToolArgsSchema = z.object({
+export const searchActorsArgsSchema = z.object({
     limit: z.number()
         .int()
         .min(1)
@@ -67,11 +67,15 @@ export const SearchToolArgsSchema = z.object({
         .default('')
         .describe('Filters the results by the specified category.'),
 });
-export const searchActorTool: ToolWrap = {
+
+/**
+ * https://docs.apify.com/api/v2/store-get
+ */
+export const searchActors: ToolEntry = {
     type: 'internal',
     tool: {
-        name: HelperTools.SEARCH_ACTORS,
-        actorFullName: HelperTools.SEARCH_ACTORS,
+        name: HelperTools.STORE_SEARCH,
+        actorFullName: HelperTools.STORE_SEARCH,
         description: `Discover available Actors or MCP-Servers in Apify Store using full text search using keywords.`
             + `Users try to discover Actors using free form query in this case search query must be converted to full text search. `
             + `Returns a list of Actors with name, description, run statistics, pricing, starts, and URL. `
@@ -79,11 +83,11 @@ export const searchActorTool: ToolWrap = {
             + `You should prefer simple keywords over complex queries. `
             + `Limit number of results returned but ensure that relevant results are returned. `
             + `This is not a general search tool, it is designed to search for Actors in Apify Store. `,
-        inputSchema: zodToJsonSchema(SearchToolArgsSchema),
-        ajvValidate: ajv.compile(zodToJsonSchema(SearchToolArgsSchema)),
+        inputSchema: zodToJsonSchema(searchActorsArgsSchema),
+        ajvValidate: ajv.compile(zodToJsonSchema(searchActorsArgsSchema)),
         call: async (toolArgs) => {
             const { args, apifyToken } = toolArgs;
-            const parsed = SearchToolArgsSchema.parse(args);
+            const parsed = searchActorsArgsSchema.parse(args);
             const actors = await searchActorsByKeywords(
                 parsed.search,
                 apifyToken,

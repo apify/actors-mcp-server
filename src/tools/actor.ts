@@ -1,16 +1,25 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { Ajv } from 'ajv';
-import type { ActorCallOptions } from 'apify-client';
+import type { ActorCallOptions, ActorRun, Dataset, PaginatedList } from 'apify-client';
+import { z } from 'zod';
+import zodToJsonSchema from 'zod-to-json-schema';
 
 import { LruCache } from '@apify/datastructures';
 import log from '@apify/log';
 
 import { ApifyClient } from '../apify-client.js';
-import { ACTOR_ADDITIONAL_INSTRUCTIONS, ACTOR_MAX_MEMORY_MBYTES, TOOL_CACHE_MAX_SIZE, TOOL_CACHE_TTL_SECS } from '../const.js';
+import {
+    ACTOR_ADDITIONAL_INSTRUCTIONS,
+    ACTOR_MAX_MEMORY_MBYTES,
+    ACTOR_RUN_DATASET_OUTPUT_MAX_ITEMS,
+    HelperTools,
+    TOOL_CACHE_MAX_SIZE,
+    TOOL_CACHE_TTL_SECS,
+} from '../const.js';
 import { getActorsMCPServerURL, isActorMCPServer } from '../mcp/actors.js';
 import { createMCPClient } from '../mcp/client.js';
 import { getMCPServerTools } from '../mcp/proxy.js';
-import type { ToolCacheEntry, ToolWrap } from '../types.js';
+import type { InternalTool, ToolCacheEntry, ToolEntry } from '../types.js';
 import { getActorDefinition } from './build.js';
 import {
     actorNameToToolName,
@@ -20,6 +29,15 @@ import {
     markInputPropertiesAsRequired,
     shortenProperties,
 } from './utils.js';
+
+const ajv = new Ajv({ coerceTypes: 'array', strict: false });
+
+// Define a named return type for callActorGetDataset
+export type CallActorGetDatasetResult = {
+    actorRun: ActorRun;
+    datasetInfo: Dataset | undefined;
+    items: PaginatedList<Record<string, unknown>>;
+};
 
 // Cache for normal Actor tools
 const normalActorToolsCache = new LruCache<ToolCacheEntry>({
@@ -37,7 +55,8 @@ const normalActorToolsCache = new LruCache<ToolCacheEntry>({
  * @param {ActorCallOptions} callOptions - The options to pass to the actor.
  * @param {unknown} input - The input to pass to the actor.
  * @param {string} apifyToken - The Apify token to use for authentication.
- * @returns {Promise<object[]>} - A promise that resolves to an array of dataset items.
+ * @param {number} limit - The maximum number of items to retrieve from the dataset.
+ * @returns {Promise<{ actorRun: any, items: object[] }>} - A promise that resolves to an object containing the actor run and dataset items.
  * @throws {Error} - Throws an error if the `APIFY_TOKEN` is not set
  */
 export async function callActorGetDataset(
@@ -45,21 +64,25 @@ export async function callActorGetDataset(
     input: unknown,
     apifyToken: string,
     callOptions: ActorCallOptions | undefined = undefined,
-): Promise<object[]> {
-    const name = actorName;
+    limit = ACTOR_RUN_DATASET_OUTPUT_MAX_ITEMS,
+): Promise<CallActorGetDatasetResult> {
     try {
-        log.info(`Calling Actor ${name} with input: ${JSON.stringify(input)}`);
+        log.info(`Calling Actor ${actorName} with input: ${JSON.stringify(input)}`);
 
         const client = new ApifyClient({ token: apifyToken });
-        const actorClient = client.actor(name);
+        const actorClient = client.actor(actorName);
 
-        const results = await actorClient.call(input, callOptions);
-        const dataset = await client.dataset(results.defaultDatasetId).listItems();
-        log.info(`Actor ${name} finished with ${dataset.items.length} items`);
+        const actorRun: ActorRun = await actorClient.call(input, callOptions);
+        const dataset = client.dataset(actorRun.defaultDatasetId);
+        const [datasetInfo, items] = await Promise.all([
+            dataset.get(),
+            dataset.listItems({ limit }),
+        ]);
+        log.info(`Actor ${actorName} finished with ${datasetInfo?.itemCount} items`);
 
-        return dataset.items;
+        return { actorRun, datasetInfo, items };
     } catch (error) {
-        log.error(`Error calling actor: ${error}. Actor: ${name}, input: ${JSON.stringify(input)}`);
+        log.error(`Error calling actor: ${error}. Actor: ${actorName}, input: ${JSON.stringify(input)}`);
         throw new Error(`Error calling Actor: ${error}`);
     }
 }
@@ -88,8 +111,8 @@ export async function callActorGetDataset(
 export async function getNormalActorsAsTools(
     actors: string[],
     apifyToken: string,
-): Promise<ToolWrap[]> {
-    const tools: ToolWrap[] = [];
+): Promise<ToolEntry[]> {
+    const tools: ToolEntry[] = [];
     const actorsToLoad: string[] = [];
     for (const actorID of actors) {
         const cacheEntry = normalActorToolsCache.get(actorID);
@@ -103,7 +126,6 @@ export async function getNormalActorsAsTools(
         return tools;
     }
 
-    const ajv = new Ajv({ coerceTypes: 'array', strict: false });
     const getActorDefinitionWithToken = async (actorId: string) => {
         return await getActorDefinition(actorId, apifyToken);
     };
@@ -128,7 +150,7 @@ export async function getNormalActorsAsTools(
             }
             try {
                 const memoryMbytes = result.defaultRunOptions?.memoryMbytes || ACTOR_MAX_MEMORY_MBYTES;
-                const tool: ToolWrap = {
+                const tool: ToolEntry = {
                     type: 'actor',
                     tool: {
                         name: actorNameToToolName(result.actorFullName),
@@ -155,8 +177,8 @@ export async function getNormalActorsAsTools(
 async function getMCPServersAsTools(
     actors: string[],
     apifyToken: string,
-): Promise<ToolWrap[]> {
-    const actorsMCPServerTools: ToolWrap[] = [];
+): Promise<ToolEntry[]> {
+    const actorsMCPServerTools: ToolEntry[] = [];
     for (const actorID of actors) {
         const serverUrl = await getActorsMCPServerURL(actorID, apifyToken);
         log.info(`ActorID: ${actorID} MCP server URL: ${serverUrl}`);
@@ -177,7 +199,7 @@ async function getMCPServersAsTools(
 export async function getActorsAsTools(
     actors: string[],
     apifyToken: string,
-): Promise<ToolWrap[]> {
+): Promise<ToolEntry[]> {
     log.debug(`Fetching actors as tools...`);
     log.debug(`Actors: ${actors}`);
     // Actorized MCP servers
@@ -201,3 +223,33 @@ export async function getActorsAsTools(
 
     return [...normalTools, ...mcpServerTools];
 }
+
+const getActorArgs = z.object({
+    actorId: z.string().describe('Actor ID or a tilde-separated owner\'s username and Actor name.'),
+});
+
+/**
+ * https://docs.apify.com/api/v2/act-get
+ */
+export const getActor: ToolEntry = {
+    type: 'internal',
+    tool: {
+        name: HelperTools.ACTOR_GET,
+        actorFullName: HelperTools.ACTOR_GET,
+        description: 'Gets an object that contains all the details about a specific Actor.'
+            + 'Actor basic information (ID, name, owner, description)'
+            + 'Statistics (number of runs, users, etc.)'
+            + 'Available versions, and configuration details'
+            + 'Use Actor ID or Actor full name, separated by tilde username~name.',
+        inputSchema: zodToJsonSchema(getActorArgs),
+        ajvValidate: ajv.compile(zodToJsonSchema(getActorArgs)),
+        call: async (toolArgs) => {
+            const { args, apifyToken } = toolArgs;
+            const parsed = getActorArgs.parse(args);
+            const client = new ApifyClient({ token: apifyToken });
+            // Get Actor - contains a lot of irrelevant information
+            const actor = await client.actor(parsed.actorId).get();
+            return { content: [{ type: 'text', text: JSON.stringify(actor) }] };
+        },
+    } as InternalTool,
+};
