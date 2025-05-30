@@ -37,7 +37,7 @@ export enum HelperTools {
 
 export const defaults = {
     actors: [
-        'apify/rag-web-browser',
+        // 'apify/rag-web-browser',
     ],
 };
 
