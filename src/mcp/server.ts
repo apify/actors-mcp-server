@@ -351,9 +351,12 @@ export class ActorsMcpServer {
             // eslint-disable-next-line prefer-const
             let { name, arguments: args } = request.params;
             const apifyToken = (request.params.apifyToken || process.env.APIFY_TOKEN) as string;
+            const userRentedActorIds = request.params.userRentedActorIds as string[] | undefined;
 
             // Remove apifyToken from request.params just in case
             delete request.params.apifyToken;
+            // Remove other custom params passed from apify-mcp-server
+            delete request.params.userRentedActorIds;
 
             // Validate token
             if (!apifyToken) {
@@ -419,6 +422,7 @@ export class ActorsMcpServer {
                         apifyMcpServer: this,
                         mcpServer: this.server,
                         apifyToken,
+                        userRentedActorIds,
                     }) as object;
 
                     return { ...res };

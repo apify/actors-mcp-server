@@ -4,6 +4,7 @@ import type { Notification, Request } from '@modelcontextprotocol/sdk/types.js';
 import type { ValidateFunction } from 'ajv';
 import type { ActorDefaultRunOptions, ActorDefinition } from 'apify-client';
 
+import type { ACTOR_PRICING_MODEL } from './const.js';
 import type { ActorsMcpServer } from './mcp/server.js';
 
 export interface ISchemaProperties {
@@ -95,6 +96,8 @@ export type InternalToolArgs = {
     mcpServer: Server;
     /** Apify API token */
     apifyToken: string;
+    /** List of Actor IDs that the user has rented */
+    userRentedActorIds?: string[];
 }
 
 /**
@@ -199,3 +202,6 @@ export interface ToolCacheEntry {
     expiresAt: number;
     tool: ToolEntry;
 }
+
+// Utility type to get the union of values of an object type
+export type ActorPricingModel = (typeof ACTOR_PRICING_MODEL)[keyof typeof ACTOR_PRICING_MODEL];

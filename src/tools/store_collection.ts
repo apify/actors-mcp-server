@@ -4,8 +4,8 @@ import { z } from 'zod';
 import zodToJsonSchema from 'zod-to-json-schema';
 
 import { ApifyClient } from '../apify-client.js';
-import { HelperTools } from '../const.js';
-import type { ActorStorePruned, HelperTool, PricingInfo, ToolEntry } from '../types.js';
+import { ACTOR_SEARCH_ABOVE_LIMIT, HelperTools } from '../const.js';
+import type { ActorPricingModel, ActorStorePruned, HelperTool, PricingInfo, ToolEntry } from '../types.js';
 
 function pruneActorStoreInfo(response: ActorStoreList): ActorStorePruned {
     const stats = response.stats || {};
@@ -38,7 +38,7 @@ export async function searchActorsByKeywords(
     apifyToken: string,
     limit: number | undefined = undefined,
     offset: number | undefined = undefined,
-): Promise<ActorStorePruned[] | null> {
+): Promise<ActorStorePruned[]> {
     const client = new ApifyClient({ token: apifyToken });
     const results = await client.store().list({ search, limit, offset });
     return results.items.map((x) => pruneActorStoreInfo(x));
@@ -69,6 +69,29 @@ export const searchActorsArgsSchema = z.object({
 });
 
 /**
+ * Filters out actors with the 'FLAT_PRICE_PER_MONTH' pricing model (rental actors),
+ * unless the actor's ID is present in the user's rented actor IDs list.
+ *
+ * This is necessary because the Store list API does not support filtering by multiple pricing models at once.
+ *
+ * @param actors - Array of ActorStorePruned objects to filter.
+ * @param userRentedActorIds - Array of actor IDs that the user has rented.
+ * @returns Array of actors excluding those with 'FLAT_PRICE_PER_MONTH' pricing model,
+ *          except for actors that the user has rented (whose IDs are in userRentedActorIds).
+ */
+function filterRentalActors(
+    actors: ActorStorePruned[],
+    userRentedActorIds: string[],
+): ActorStorePruned[] {
+    // Store list API does not support filtering by two pricing models at once,
+    // so we filter the results manually after fetching them.
+    return actors.filter((actor) => (
+        actor.currentPricingInfo.pricingModel as ActorPricingModel) !== 'FLAT_PRICE_PER_MONTH'
+        || userRentedActorIds.includes(actor.id),
+    );
+}
+
+/**
  * https://docs.apify.com/api/v2/store-get
  */
 export const searchActors: ToolEntry = {
@@ -86,14 +109,16 @@ export const searchActors: ToolEntry = {
         inputSchema: zodToJsonSchema(searchActorsArgsSchema),
         ajvValidate: ajv.compile(zodToJsonSchema(searchActorsArgsSchema)),
         call: async (toolArgs) => {
-            const { args, apifyToken } = toolArgs;
+            const { args, apifyToken, userRentedActorIds } = toolArgs;
             const parsed = searchActorsArgsSchema.parse(args);
-            const actors = await searchActorsByKeywords(
+            let actors = await searchActorsByKeywords(
                 parsed.search,
                 apifyToken,
-                parsed.limit,
+                parsed.limit + ACTOR_SEARCH_ABOVE_LIMIT,
                 parsed.offset,
             );
+            actors = filterRentalActors(actors || [], userRentedActorIds || []).slice(0, parsed.limit);
+
             return { content: actors?.map((item) => ({ type: 'text', text: JSON.stringify(item) })) };
         },
     } as HelperTool,
