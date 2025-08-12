@@ -33,5 +33,6 @@ export function processInput(originalInput: Partial<Input>): Input {
     if (input.tools && typeof input.tools === 'string') {
         input.tools = input.tools.split(',').map((tool: string) => tool.trim()) as ToolCategory[];
     }
+    input.fullActorSchema = input.fullActorSchema === true || input.fullActorSchema === 'true';
     return input;
 }

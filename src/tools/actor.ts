@@ -10,6 +10,7 @@ import { ApifyClient } from '../apify-client.js';
 import {
     ACTOR_ADDITIONAL_INSTRUCTIONS,
     ACTOR_MAX_MEMORY_MBYTES,
+    ADVANCED_INPUT_KEY,
     HelperTools,
 } from '../const.js';
 import { getActorMCPServerPath, getActorMCPServerURL } from '../mcp/actors.js';
@@ -46,7 +47,7 @@ export type CallActorGetDatasetResult = {
  *
  * @param {string} actorName - The name of the actor to call.
  * @param {ActorCallOptions} callOptions - The options to pass to the actor.
- * @param {unknown} input - The input to pass to the actor.
+ * @param {Record<string, unknown>} simplifiedInput - The input to pass to the actor.
  * @param {string} apifyToken - The Apify token to use for authentication.
  * @param {ProgressTracker} progressTracker - Optional progress tracker for real-time updates.
  * @returns {Promise<{ actorRun: any, items: object[] }>} - A promise that resolves to an object containing the actor run and dataset items.
@@ -54,11 +55,18 @@ export type CallActorGetDatasetResult = {
  */
 export async function callActorGetDataset(
     actorName: string,
-    input: unknown,
+    simplifiedInput: Record<string, unknown>,
     apifyToken: string,
     callOptions: ActorCallOptions | undefined = undefined,
     progressTracker?: ProgressTracker | null,
 ): Promise<CallActorGetDatasetResult> {
+    let input = simplifiedInput;
+    // Moves the advances input properties into the root object
+    if (input[ADVANCED_INPUT_KEY]) {
+        const { [ADVANCED_INPUT_KEY]: advancedInput, ...rest } = input;
+        input = { ...advancedInput, ...rest };
+    }
+
     try {
         const client = new ApifyClient({ token: apifyToken });
         const actorClient = client.actor(actorName);
@@ -115,10 +123,12 @@ export async function callActorGetDataset(
  * 5. Enums are added to descriptions with examples using addEnumsToDescriptionsWithExamples()
  *
  * @param {ActorInfo[]} actorsInfo - An array of ActorInfo objects with webServerMcpPath and actorDefinitionPruned.
+ * @param {boolean} fullActorSchema - If true, the full Actor input schema is exposed.
  * @returns {Promise<ToolEntry[]>} - A promise that resolves to an array of MCP tools.
  */
 export async function getNormalActorsAsTools(
     actorsInfo: ActorInfo[],
+    fullActorSchema: boolean,
 ): Promise<ToolEntry[]> {
     const tools: ToolEntry[] = [];
 
@@ -129,7 +139,10 @@ export async function getNormalActorsAsTools(
         if (actorDefinitionPruned) {
             const schemaID = getToolSchemaID(actorDefinitionPruned.actorFullName);
             if (actorDefinitionPruned.input && 'properties' in actorDefinitionPruned.input && actorDefinitionPruned.input) {
-                actorDefinitionPruned.input.properties = transformActorInputSchemaProperties(actorDefinitionPruned.input);
+                actorDefinitionPruned.input.properties = transformActorInputSchemaProperties(
+                    actorDefinitionPruned.input,
+                    { separateAdvancedInputs: !fullActorSchema },
+                );
                 // Add schema $id, each valid JSON schema should have a unique $id
                 // see https://json-schema.org/understanding-json-schema/basics#declaring-a-unique-identifier
                 actorDefinitionPruned.input.$id = schemaID;
@@ -202,6 +215,7 @@ async function getMCPServersAsTools(
 export async function getActorsAsTools(
     actorIdsOrNames: string[],
     apifyToken: string,
+    fullActorSchema = false,
 ): Promise<ToolEntry[]> {
     log.debug('Fetching actors as tools', { actorNames: actorIdsOrNames });
 
@@ -237,7 +251,7 @@ export async function getActorsAsTools(
     const normalActorsInfo = clonedActors.filter((actorInfo) => actorInfo && !actorInfo.webServerMcpPath) as ActorInfo[];
 
     const [normalTools, mcpServerTools] = await Promise.all([
-        getNormalActorsAsTools(normalActorsInfo),
+        getNormalActorsAsTools(normalActorsInfo, fullActorSchema),
         getMCPServersAsTools(actorMCPServersInfo, apifyToken),
     ]);
 
@@ -260,7 +274,6 @@ export const callActor: ToolEntry = {
     type: 'internal',
     tool: {
         name: HelperTools.ACTOR_CALL,
-        actorFullName: HelperTools.ACTOR_CALL,
         description: `Call an Actor and get the Actor run results. If you are not sure about the Actor input, you MUST get the Actor details first, which also returns the input schema using ${HelperTools.ACTOR_GET_DETAILS}. The Actor MUST be added before calling; use the ${HelperTools.ACTOR_ADD} tool first. By default, the Apify MCP server makes newly added Actors available as tools for calling. Use this tool ONLY if you cannot call the newly added tool directly, and NEVER call this tool before first trying to call the tool directly. For example, when you add an Actor "apify/instagram-scraper" using the ${HelperTools.ACTOR_ADD} tool, the Apify MCP server will add a new tool ${actorNameToToolName('apify/instagram-scraper')} that you can call directly. If calling this tool does not work, then and ONLY then MAY you use this tool as a backup.`,
         inputSchema: zodToJsonSchema(callActorArgs),
         ajvValidate: ajv.compile(zodToJsonSchema(callActorArgs)),

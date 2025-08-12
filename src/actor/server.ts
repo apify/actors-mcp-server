@@ -75,12 +75,12 @@ export function createExpressApp(
                 rt: Routes.SSE,
                 tr: TransportType.SSE,
             });
-            const mcpServer = new ActorsMcpServer(mcpServerOptions, false);
+            const input = parseInputParamsFromUrl(req.url);
+            const mcpServer = new ActorsMcpServer({ ...mcpServerOptions, fullActorSchema: !!input.fullActorSchema }, false);
             const transport = new SSEServerTransport(Routes.MESSAGE, res);
 
             // Load MCP server tools
             const apifyToken = process.env.APIFY_TOKEN as string;
-            const input = parseInputParamsFromUrl(req.url);
             if (input.actors || input.enableAddingActors || input.tools) {
                 log.debug('Loading tools from URL', { sessionId: transport.sessionId, tr: TransportType.SSE });
                 await mcpServer.loadToolsFromUrl(req.url, apifyToken);
@@ -166,11 +166,11 @@ export function createExpressApp(
                     sessionIdGenerator: () => randomUUID(),
                     enableJsonResponse: false, // Use SSE response mode
                 });
-                const mcpServer = new ActorsMcpServer(mcpServerOptions, false);
+                const input = parseInputParamsFromUrl(req.url);
+                const mcpServer = new ActorsMcpServer({ ...mcpServerOptions, fullActorSchema: !!input.fullActorSchema }, false);
 
                 // Load MCP server tools
                 const apifyToken = process.env.APIFY_TOKEN as string;
-                const input = parseInputParamsFromUrl(req.url);
                 if (input.actors || input.enableAddingActors || input.tools) {
                     log.debug('Loading tools from URL', { sessionId: transport.sessionId, tr: TransportType.HTTP });
                     await mcpServer.loadToolsFromUrl(req.url, apifyToken);

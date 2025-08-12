@@ -39,6 +39,7 @@ interface CliArgs {
     enableActorAutoLoading: boolean;
     /** Tool categories to include */
     tools?: string;
+    fullActorSchema: boolean;
 }
 
 // Configure logging, set to ERROR
@@ -79,6 +80,13 @@ Note: Tools that enable you to search Actors from the Apify Store and get their 
 `,
         example: 'docs,runs,storage',
     })
+    .option('full-actor-schema', {
+        type: 'boolean',
+        default: false,
+        describe: 'Default behavior keeps tools simple: advanced inputs are grouped under "advancedInput" and their schema is not expanded in the tools list. '
+            + 'This reduces context size and makes tools easier to use. Use the "get-actor-details" tool to view the complete input schema and documentation. '
+            + 'Enable this option to disable the simplification and expose the full Actor input schema with all parameters at the top level.',
+    })
     .help('help')
     .alias('h', 'help')
     .version(false)
@@ -110,7 +118,7 @@ if (!process.env.APIFY_TOKEN) {
 }
 
 async function main() {
-    const mcpServer = new ActorsMcpServer({ enableAddingActors, enableDefaultActors: false });
+    const mcpServer = new ActorsMcpServer({ enableAddingActors, enableDefaultActors: false, fullActorSchema: argv.fullActorSchema });
 
     // Create an Input object from CLI arguments
     const input: Input = {

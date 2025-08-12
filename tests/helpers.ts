@@ -11,6 +11,7 @@ export interface McpClientOptions {
     actors?: string[];
     enableAddingActors?: boolean;
     tools?: ToolCategory[]; // Tool categories to include
+    fullActorSchema?: boolean;
 }
 
 export async function createMcpSseClient(
@@ -21,7 +22,7 @@ export async function createMcpSseClient(
         throw new Error('APIFY_TOKEN environment variable is not set.');
     }
     const url = new URL(serverUrl);
-    const { actors, enableAddingActors, tools } = options || {};
+    const { actors, enableAddingActors, tools, fullActorSchema } = options || {};
     if (actors) {
         url.searchParams.append('actors', actors.join(','));
     }
@@ -30,6 +31,9 @@ export async function createMcpSseClient(
     }
     if (tools && tools.length > 0) {
         url.searchParams.append('tools', tools.join(','));
+    }
+    if (fullActorSchema !== undefined) {
+        url.searchParams.append('fullActorSchema', fullActorSchema.toString());
     }
 
     const transport = new SSEClientTransport(
@@ -60,7 +64,7 @@ export async function createMcpStreamableClient(
         throw new Error('APIFY_TOKEN environment variable is not set.');
     }
     const url = new URL(serverUrl);
-    const { actors, enableAddingActors, tools } = options || {};
+    const { actors, enableAddingActors, tools, fullActorSchema } = options || {};
     if (actors) {
         url.searchParams.append('actors', actors.join(','));
     }
@@ -69,6 +73,9 @@ export async function createMcpStreamableClient(
     }
     if (tools && tools.length > 0) {
         url.searchParams.append('tools', tools.join(','));
+    }
+    if (fullActorSchema !== undefined) {
+        url.searchParams.append('fullActorSchema', fullActorSchema.toString());
     }
 
     const transport = new StreamableHTTPClientTransport(
@@ -97,7 +104,7 @@ export async function createMcpStdioClient(
     if (!process.env.APIFY_TOKEN) {
         throw new Error('APIFY_TOKEN environment variable is not set.');
     }
-    const { actors, enableAddingActors, tools } = options || {};
+    const { actors, enableAddingActors, tools, fullActorSchema } = options || {};
     const args = ['dist/stdio.js'];
     if (actors) {
         args.push('--actors', actors.join(','));
@@ -107,6 +114,9 @@ export async function createMcpStdioClient(
     }
     if (tools && tools.length > 0) {
         args.push('--tools', tools.join(','));
+    }
+    if (fullActorSchema !== undefined) {
+        args.push('--full-actor-schema', fullActorSchema.toString());
     }
 
     const transport = new StdioClientTransport({

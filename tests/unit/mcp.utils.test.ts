@@ -44,4 +44,10 @@ describe('parseInputParamsFromUrl', () => {
         const result = parseInputParamsFromUrl(url);
         expect(result.actors).toEqual(['apify/rag-web-browser']);
     });
+
+    it('should parse fullActorSchema flag', () => {
+        const url = 'https://actors-mcp-server.apify.actor?fullActorSchema=true';
+        const result = parseInputParamsFromUrl(url);
+        expect(result.fullActorSchema).toBe(true);
+    });
 });

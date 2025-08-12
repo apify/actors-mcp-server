@@ -59,7 +59,7 @@ export const addTool: ToolEntry = {
                     }],
                 };
             }
-            const tools = await getActorsAsTools([parsed.actor], apifyToken);
+            const tools = await getActorsAsTools([parsed.actor], apifyToken, apifyMcpServer.options.fullActorSchema);
             /**
              * If no tools were found, return a message that the Actor was not found
              * instead of returning that non existent tool was added since the

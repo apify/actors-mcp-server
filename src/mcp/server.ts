@@ -38,6 +38,7 @@ import { processParamsGetTools } from './utils.js';
 type ActorsMcpServerOptions = {
     enableAddingActors?: boolean;
     enableDefaultActors?: boolean;
+    fullActorSchema?: boolean;
 };
 
 type ToolsChangedHandler = (toolNames: string[]) => void;
@@ -48,7 +49,7 @@ type ToolsChangedHandler = (toolNames: string[]) => void;
 export class ActorsMcpServer {
     public readonly server: Server;
     public readonly tools: Map<string, ToolEntry>;
-    private options: ActorsMcpServerOptions;
+    public readonly options: ActorsMcpServerOptions;
     private toolsChangedHandler: ToolsChangedHandler | undefined;
     private sigintHandler: (() => Promise<void>) | undefined;
 
@@ -56,6 +57,7 @@ export class ActorsMcpServer {
         this.options = {
             enableAddingActors: options.enableAddingActors ?? true,
             enableDefaultActors: options.enableDefaultActors ?? true, // Default to true for backward compatibility
+            fullActorSchema: options.fullActorSchema ?? false,
         };
         this.server = new Server(
             {
@@ -195,7 +197,7 @@ export class ActorsMcpServer {
         }
 
         if (actorsToLoad.length > 0) {
-            const actorTools = await getActorsAsTools(actorsToLoad, apifyToken);
+            const actorTools = await getActorsAsTools(actorsToLoad, apifyToken, this.options.fullActorSchema);
             if (actorTools.length > 0) {
                 this.upsertTools(actorTools);
             }
@@ -237,7 +239,7 @@ export class ActorsMcpServer {
      */
     public async loadDefaultActors(apifyToken: string): Promise<void> {
         const missingActors = defaults.actors.filter((name) => !this.tools.has(actorNameToToolName(name)));
-        const tools = await getActorsAsTools(missingActors, apifyToken);
+        const tools = await getActorsAsTools(missingActors, apifyToken, this.options.fullActorSchema);
         if (tools.length > 0) {
             log.debug('Loading default tools');
             this.upsertTools(tools);

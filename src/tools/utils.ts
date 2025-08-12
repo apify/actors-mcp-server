@@ -1,7 +1,7 @@
 import type { ValidateFunction } from 'ajv';
 import type Ajv from 'ajv';
 
-import { ACTOR_ENUM_MAX_LENGTH, ACTOR_MAX_DESCRIPTION_LENGTH } from '../const.js';
+import { ACTOR_ENUM_MAX_LENGTH, ACTOR_MAX_DESCRIPTION_LENGTH, ADVANCED_INPUT_KEY } from '../const.js';
 import type { ActorInputSchemaProperties, IActorInputSchema, ISchemaProperties } from '../types.js';
 import {
     addGlobsProperties,
@@ -279,15 +279,81 @@ export function decodeDotPropertyNames(properties: Record<string, unknown>): Rec
     return decodedProperties;
 }
 
-export function transformActorInputSchemaProperties(input: Readonly<IActorInputSchema>): ActorInputSchemaProperties {
+/**
+ * Separates advanced inputs into a dedicated ADVANCED_INPUT_KEY object based on the first section-captioned property.
+ * The properties from the first section-captioned property onwards are grouped under the advanced input object.
+ */
+export function separateAdvancedInputsInSchema(properties: Record<string, ISchemaProperties>): Record<string, ISchemaProperties> {
+    const propertiesEntries = Object.entries(properties);
+    const firstSectionCaptionIndex = propertiesEntries.findIndex(([_key, value]) => value.sectionCaption);
+    if (firstSectionCaptionIndex === -1) {
+        return properties;
+    }
+
+    const mainInputs = propertiesEntries.slice(0, firstSectionCaptionIndex);
+    const advancedInputs = propertiesEntries.slice(firstSectionCaptionIndex);
+
+    const propObject: Record<string, ISchemaProperties> = Object.fromEntries(mainInputs);
+    // Use a basic object container here; additional details (like title/description) are not required at this stage
+    propObject.advancedInput = {
+        type: 'object',
+        title: 'Advanced Inputs',
+        description: 'Universal object for advanced inputs. Full definition is available in tool get-actor-detail. '
+        + 'These inputs are considered advanced and are not required for basic functionality.',
+        properties: Object.fromEntries(advancedInputs),
+    } as unknown as ISchemaProperties;
+
+    return propObject;
+}
+
+export function transformActorInputSchemaProperties(
+    input: Readonly<IActorInputSchema>,
+    options?: { separateAdvancedInputs?: boolean },
+): ActorInputSchemaProperties {
     // Deep clone input to avoid mutating the original object
     const inputClone: IActorInputSchema = structuredClone(input);
-    let transformedProperties = markInputPropertiesAsRequired(inputClone);
-    transformedProperties = buildApifySpecificProperties(transformedProperties);
-    transformedProperties = filterSchemaProperties(transformedProperties);
-    transformedProperties = inferArrayItemsTypeIfMissing(transformedProperties);
-    transformedProperties = shortenProperties(transformedProperties);
-    transformedProperties = addEnumsToDescriptionsWithExamples(transformedProperties);
-    transformedProperties = encodeDotPropertyNames(transformedProperties);
-    return transformedProperties;
+
+    const transform = (transformInput: IActorInputSchema) => {
+        let transformedProperties = markInputPropertiesAsRequired(transformInput);
+        transformedProperties = buildApifySpecificProperties(transformedProperties);
+        transformedProperties = filterSchemaProperties(transformedProperties);
+        transformedProperties = inferArrayItemsTypeIfMissing(transformedProperties);
+        transformedProperties = shortenProperties(transformedProperties);
+        transformedProperties = addEnumsToDescriptionsWithExamples(transformedProperties);
+        transformedProperties = encodeDotPropertyNames(transformedProperties);
+        return transformedProperties;
+    };
+
+    if (options?.separateAdvancedInputs) {
+        inputClone.properties = separateAdvancedInputsInSchema(inputClone.properties);
+        if (inputClone.properties[ADVANCED_INPUT_KEY]) {
+            inputClone.properties[ADVANCED_INPUT_KEY].properties = transform(inputClone.properties[ADVANCED_INPUT_KEY] as IActorInputSchema);
+        }
+    }
+
+    return transform(inputClone);
+}
+
+export function transformActorInputForGetDetails(
+    input: Readonly<IActorInputSchema>,
+    options?: { separateAdvancedInputs?: boolean },
+): IActorInputSchema {
+    // Deep clone input to avoid mutating the original object
+    const inputClone = structuredClone(input) as IActorInputSchema;
+
+    const transform = (transformInput: IActorInputSchema) => {
+        let transformedProperties = filterSchemaProperties(transformInput.properties);
+        transformedProperties = shortenProperties(transformedProperties);
+        return transformedProperties;
+    };
+
+    if (options?.separateAdvancedInputs) {
+        inputClone.properties = separateAdvancedInputsInSchema(inputClone.properties);
+        if (inputClone.properties[ADVANCED_INPUT_KEY]) {
+            inputClone.properties[ADVANCED_INPUT_KEY].properties = transform(inputClone.properties[ADVANCED_INPUT_KEY] as IActorInputSchema);
+        }
+    }
+
+    inputClone.properties = transform(inputClone);
+    return inputClone;
 }
