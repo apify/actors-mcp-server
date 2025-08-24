@@ -1,8 +1,9 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { CallToolResultSchema, ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ApifyClient } from '../../src/apify-client.js';
 import { defaults, HelperTools } from '../../src/const.js';
 import { latestNewsOnTopicPrompt } from '../../src/prompts/latest-news-on-topic.js';
 import { addRemoveTools, defaultTools, toolCategories, toolCategoriesEnabledByDefault } from '../../src/tools/index.js';
@@ -492,6 +493,51 @@ export function createIntegrationTestsSuite(
             await client.listTools();
             await (client.transport as StreamableHTTPClientTransport).terminateSession();
             await client.close();
+        });
+
+        // Cancellation test: start a long-running actor and cancel immediately, then verify it was aborted
+        it('should abort actor run when request is cancelled', async () => {
+            const ACTOR_NAME = 'michal.kalita/test-timeout';
+            const selectedToolName = actorNameToToolName(ACTOR_NAME);
+            const client = await createClientFn({ enableAddingActors: true });
+
+            // Add actor as tool
+            await addActor(client, ACTOR_NAME);
+
+            // Build request and cancel immediately via AbortController
+            const controller = new AbortController();
+
+            const requestPromise = client.request({
+                method: 'tools/call' as const,
+                params: {
+                    name: selectedToolName,
+                    arguments: { timeout: 30 },
+                },
+            }, CallToolResultSchema, { signal: controller.signal })
+            // Ignores error "AbortError: This operation was aborted"
+                .catch(() => undefined);
+
+            // Abort right away
+            setTimeout(() => controller.abort(), 1000);
+
+            // Ensure the request completes/cancels before proceeding
+            await requestPromise;
+
+            // Verify via Apify API that a recent run for this actor was aborted
+            const api = new ApifyClient({ token: process.env.APIFY_TOKEN as string });
+            const actor = await api.actor(ACTOR_NAME).get();
+            expect(actor).toBeDefined();
+            const actId = actor!.id as string;
+
+            // Poll up to 30s for the latest run for this actor to reach ABORTED/ABORTING
+            await vi.waitUntil(async () => {
+                const runsList = await api.runs().list({ limit: 5, desc: true });
+                const run = runsList.items.find((r) => r.actId === actId);
+                if (run) {
+                    return run.status === 'ABORTED' || run.status === 'ABORTING';
+                }
+                return false;
+            }, { timeout: 30000, interval: 1000 });
         });
 
         // Environment variable tests - only applicable to stdio transport
